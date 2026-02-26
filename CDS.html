@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Simple CDS Pricer</title>
+  <style>
+    :root { --accent: #2563eb; }
+    body { font-family: Arial, sans-serif; background:#f7f7f7; padding:20px; }
+    .card { background:white; padding:20px; border-radius:12px; max-width:750px; margin:auto; box-shadow:0 4px 12px rgba(0,0,0,0.1); }
+    h1 { font-size:24px; }
+    label { display:block; margin-top:12px; font-weight:bold; }
+    input, select { width:100%; padding:8px; margin-top:4px; border-radius:6px; border:1px solid #ccc; }
+    button{background:linear-gradient(90deg,var(--accent),#4f46e5);border:none;padding:10px 14px;border-radius:10px;color:white;font-weight:600;cursor:pointer;width:100%;margin-top:20px}
+    button:hover { background:#1e4ed8; }
+    .results { margin-top:20px; background:#f1f5f9; padding:15px; border-radius:8px; }
+    .results p { margin:6px 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>CDS Pricer</h1>
+
+    <label>Position</label>
+    <select id="position">
+      <option value="buyer">Protection Buyer</option>
+      <option value="seller">Protection Seller</option>
+    </select>
+
+    <label>Maturity (years)</label>
+    <input id="maturity" type="number" step="0.25" value="5" />
+
+    <label>Market Spread (bps)</label>
+    <input id="spread" type="number" value="171" />
+
+    <label>Coupon (bps)</label>
+    <input id="coupon" type="number" value="100" />
+
+    <label>Recovery Rate</label>
+    <input id="recovery" type="number" step="0.01" value="0.4" />
+
+    <label>Notional</label>
+    <input id="notional" type="text" value="10,000,000" oninput="formatNotional(this)" />
+
+    <label>Discount Rate r (OIS)</label>
+    <input id="discount" type="number" step="0.001" value="0.02" />
+
+    <button onclick="priceCDS()">Price CDS</button>
+
+    <div class="results" id="results"></div>
+  </div>
+
+<script>
+function formatNumber(num) {
+  return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatNotional(input) {
+  const raw = input.value.replace(/,/g, '');
+  if (!isNaN(raw) && raw !== '') {
+    input.value = parseFloat(raw).toLocaleString();
+  }
+}
+
+function priceCDS() {
+
+  const position = document.getElementById('position').value;
+  const T = parseFloat(document.getElementById('maturity').value);
+  const spread = parseFloat(document.getElementById('spread').value) / 10000;
+  const coupon = parseFloat(document.getElementById('coupon').value) / 10000;
+  const R = parseFloat(document.getElementById('recovery').value);
+  const N = parseFloat(document.getElementById('notional').value.replace(/,/g, ''));
+  const r = parseFloat(document.getElementById('discount').value);
+
+  const dt = 0.25;
+  const n = Math.floor(T / dt);
+
+  // Flat hazard from market spread
+  const lambda = spread / (1 - R);
+
+  let premiumLeg = 0;
+  let protectionLeg = 0;
+  let riskyAnnuity = 0;
+  let weightedTime = 0;
+
+  for (let i = 1; i <= n; i++) {
+    const t = i * dt;
+
+    const survival = Math.exp(-lambda * t);
+    const survivalPrev = Math.exp(-lambda * (t - dt));
+    const df = Math.exp(-r * t);
+
+    // Premium leg
+    premiumLeg += coupon * dt * df * survival;
+
+    // Risky annuity (no coupon)
+    riskyAnnuity += dt * df * survival;
+
+    // Protection leg
+    const defaultProb = survivalPrev - survival;
+    protectionLeg += defaultProb * df * (1 - R);
+
+    // Duration numerator (proper definition)
+    weightedTime += t * dt * df * survival;
+  }
+
+  const pvPremium = premiumLeg * N;
+  const pvProtection = protectionLeg * N;
+
+    // Upfront cashflow FROM the perspective of selected position
+  // If Prot > Prem:
+  //   Buyer pays upfront (negative cashflow)
+  //   Seller receives upfront (positive cashflow)
+
+  const upfrontCashflowBuyer = pvPremium - pvProtection; // cash received by buyer
+  const upfront = position === "buyer"
+    ? upfrontCashflowBuyer
+    : -upfrontCashflowBuyer;
+
+  // Proper risky duration
+  const duration = weightedTime / riskyAnnuity;
+
+  document.getElementById('results').innerHTML = `
+    <p><strong>Hazard Rate:</strong> ${formatNumber(lambda * 100)} %</p>
+    <p><strong>Premium Leg PV:</strong> ${formatNumber(pvPremium)}</p>
+    <p><strong>Protection Leg PV:</strong> ${formatNumber(pvProtection)}</p>
+    <p><strong>Risky Annuity:</strong> ${formatNumber(riskyAnnuity)}</p>
+    <p><strong>CDS Duration:</strong> ${formatNumber(duration)} years</p>
+    <p><strong>Upfront (${position.charAt(0).toUpperCase() + position.slice(1)}):</strong> ${formatNumber(upfront)}</p>
+  `;
+}
+  </script>
+  <footer style="margin:40px auto 20px;max-width:920px;text-align:center;font-size:12px;color:#777;font-style:italic;">
+    © Quantik.org. All rights reserved. This model, including its code and associated intellectual property, is the exclusive property of Quantik.org and may not be copied, distributed, or replicated without prior written consent. Use of this calculator implies acceptance of these terms.
+  </footer>
+</body>
+</html>
